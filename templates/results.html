@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jaundice Detection Result</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .container {
+            max-width: 1200px;
+        }
+
+        .row {
+            margin-bottom: 20px;
+        }
+
+        .col-md-6 {
+            padding: 10px;
+        }
+
+        .img-fluid {
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+            margin: 10px 0;
+        }
+
+        .result-card {
+            margin-bottom: 20px;
+        }
+
+        .spinner-border {
+            vertical-align: middle;
+        }
+
+        .hue-bar {
+            width: 100%;
+            height: 20px;
+            background: linear-gradient(to right, #ffff00, #ff9900, #ff0000);
+            /* Yellow to red */
+            position: relative;
+            margin-top: 10px;
+        }
+
+        .hue-bar-indicator {
+            position: absolute;
+            top: -10px;
+            /* Position above the bar */
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 10px solid black;
+        }
+
+        .value-label {
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .btn-lg {
+            font-size: 14px;
+        }
+
+        @media (max-width: 768px) {
+            .row {
+                flex-direction: column;
+            }
+
+            .col-md-6 {
+                margin-bottom: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="card result-card">
+            <div class="card-body text-center">
+                <h2 class="card-title mb-4">🩺 Jaundice Detection</h2>
+
+                <!-- Flex container for video and results -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <!-- Video feed on the left -->
+                        <img src="{{ url_for('video_feed') }}" id="videoStream" class="img-fluid border rounded"
+                            width="320" height="240">
+                        <br>
+                        <label for="imageFilename">Enter person name:</label>
+                        <input type="text" id="imageFilename" class="form-control" placeholder="Enter filename" />
+                        <button onclick="triggerCapture()" class="btn btn-primary btn-lg" id="captureBtn">📸 Take
+                            Photo</button>
+                    </div>
+
+                    <div class="col-md-6">
+                        <!-- Analysis on the right -->
+                        <div id="resultsSection" style="display: none;">
+                            <div class="row">
+                                <div class="col-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">Face with ROI</h5>
+                                            <img id="roiImage" src="" alt="With ROI" class="img-fluid">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">Yellow Mask</h5>
+                                            <img id="maskImage" src="" alt="Yellow Mask" class="img-fluid">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card mt-4">
+                                <div class="card-body">
+                                    <h5 class="card-title text-center">Mean Hue</h5>
+                                    <div class="color-bar-section">
+                                        <label>Hue Bar</label>
+                                        <div class="hue-bar">
+                                            <div class="hue-bar-indicator" id="hueIndicator"></div>
+                                        </div>
+                                        <div class="value-label" id="hueValue">-</div>
+                                    </div>
+                                    <div class="value-label" id="saturationValue">-</div>
+                                    <div class="value-label" id="valueValue">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function triggerCapture() {
+            const btn = document.getElementById('captureBtn');
+            const filename = document.getElementById('imageFilename').value.trim();
+
+            if (filename === '') {
+                alert("Please enter a filename.");
+                return;
+            }
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Processing...';
+            document.getElementById('videoStream').src = "";
+            try {
+                // 1. Trigger capture with the filename
+                const formData = new FormData();
+                formData.append('filename', filename);
+
+                const captureResponse = await fetch('/trigger-capture', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!captureResponse.ok) throw new Error('Failed to trigger capture');
+
+                // 2. Poll for the result
+                const result = await pollForResult();
+
+                // 3. Update UI 
+                updateResults(result);
+            } catch (error) {
+                console.error("Error:", error);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '📸 Take Photo';
+                document.getElementById('videoStream').src = "{{ url_for('video_feed') }}";
+            }
+        }
+
+        async function pollForResult(retries = 20, interval = 1000) {
+            for (let i = 0; i < retries; i++) {
+                const response = await fetch('/check-result');
+                const data = await response.json();
+                if (response.status === 200 && data.image_filename) {
+                    return data;
+                }
+                await new Promise(resolve => setTimeout(resolve, interval));
+            }
+            throw new Error('Timeout waiting for results');
+        }
+
+        function updateResults(result) {
+            if (result.image_filename) {
+                document.getElementById('roiImage').src = "{{ url_for('get_image', image_path='') }}" + result.image_filename + "?t=" + new Date().getTime();
+                document.getElementById('maskImage').src = "{{ url_for('get_image', image_path='') }}" + result.mask_filename + "?t=" + new Date().getTime();
+
+                document.getElementById('resultsSection').style.display = 'block';
+            }
+            renderColorBars(result.mean_hue, result.mean_saturation, result.mean_value);
+        }
+
+        function renderColorBars(meanHue, meanSaturation, meanValue) {
+            const hueBar = document.querySelector('.hue-bar');
+            const hueWidth = hueBar.offsetWidth || 300;  // Default fallback
+            const hueRange = 179;
+            const indicatorPosition = (meanHue / hueRange) * hueWidth;
+            const hueIndicator = document.getElementById('hueIndicator');
+            if (hueIndicator) {
+                hueIndicator.style.left = `${indicatorPosition}px`;  // Use template literal properly
+            }
+            document.getElementById('hueValue').textContent = `Mean Hue: ${meanHue}`;
+            document.getElementById('saturationValue').textContent = `Mean Saturation: ${meanSaturation}`;
+            document.getElementById('valueValue').textContent = `Mean Value: ${meanValue}`;
+        }
+    </script>
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+</body>
+
+</html>
